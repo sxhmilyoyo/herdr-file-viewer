@@ -115,6 +115,14 @@ pub enum Intent {
     /// checks out a branch or mutates any worktree (AC-N1/N2). The picker is keyboard-operable
     /// (AC-5); a switch happens ONLY in response to this explicit action (AC-N5).
     SwitchWorktree,
+    /// Toggle the **session view**: present the files the current Claude Code session touched
+    /// (in-root synthesized tree + outside-root section) instead of the directory tree, or
+    /// restore the full tree. Mutually exclusive with the changed-only / status filters.
+    /// Read-only — it reads the session transcript and changes only what the tree shows.
+    ToggleSessionView,
+    /// Open the session picker to choose which Claude Code session transcript the session view
+    /// presents (newest is followed by default). Read-only, like the worktree picker.
+    OpenSessionPicker,
     /// Open the go-to-file finder overlay to navigate to any file in the repository by
     /// typing a fuzzy query. Read-only — it navigates the viewer's selection; it never
     /// modifies any file (AC-1, AC-N1, AC-N3).
@@ -179,7 +187,7 @@ pub enum Intent {
 impl Intent {
     /// Every intent variant — lets the dispatcher and tests enumerate the closed set so
     /// keyboard-completeness (AC-18) and the no-file/git-mutation invariant (AC-N3) stay checkable.
-    pub const ALL: [Intent; 46] = [
+    pub const ALL: [Intent; 48] = [
         Intent::NavUp,
         Intent::NavDown,
         Intent::PageUp,
@@ -214,6 +222,8 @@ impl Intent {
         Intent::Refresh,
         Intent::DismissUpdate,
         Intent::SwitchWorktree,
+        Intent::ToggleSessionView,
+        Intent::OpenSessionPicker,
         Intent::OpenFinder,
         Intent::OpenProjectSearch,
         Intent::OpenGoToLine,
@@ -276,6 +286,8 @@ mod tests {
                 // Writes only the plugin-owned `spotlight-dismissal.json`, never viewed files or git.
                 | Intent::DismissUpdate
                 | Intent::SwitchWorktree
+                | Intent::ToggleSessionView
+                | Intent::OpenSessionPicker
                 | Intent::OpenFinder
                 | Intent::OpenProjectSearch
                 | Intent::OpenGoToLine
@@ -360,11 +372,11 @@ mod tests {
     }
 
     #[test]
-    fn all_length_is_46() {
+    fn all_length_is_48() {
         assert_eq!(
             Intent::ALL.len(),
-            46,
-            "Intent::ALL must have exactly 46 variants"
+            48,
+            "Intent::ALL must have exactly 48 variants"
         );
     }
 

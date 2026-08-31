@@ -177,6 +177,10 @@ pub struct Config {
     /// the existing context-smart choice. The interactive `b` key still toggles the baseline after
     /// startup.
     pub baseline: Option<String>,
+    /// Whether the viewer starts in the **session view** (the files the current Claude Code
+    /// session touched) instead of the directory tree — the ambient companion-pane launch. The
+    /// `s` toggle still leaves/re-enters it at runtime. `None` falls back to `false`.
+    pub session_view: Option<bool>,
     pub update_check: Option<bool>,
     /// Whether quitting with unexported session annotations confirms first. `None` falls back to
     /// `true`: annotations are session-only, so quitting destroys them, and the confirm is the only
@@ -360,6 +364,9 @@ pub struct EffectiveSettings {
     /// An explicit startup **diff baseline** from `baseline`, or `None` when startup must retain
     /// [`crate::git::default_baseline`]'s context-smart selection. Config-or-default (no env var).
     pub baseline: Option<crate::git::Baseline>,
+    /// The effective **start-in-session-view** switch: the config `session_view` when present,
+    /// else `false`. Config-or-default (no env var).
+    pub session_view: bool,
     pub update_check: bool,
     /// The effective **confirm-before-discarding-annotations** switch: the config
     /// `confirm_discard` when present, else `true`. Config-or-default (no env var).
@@ -485,6 +492,10 @@ pub fn resolve(config: &Config, get_env: impl Fn(&str) -> Option<String>) -> Eff
     // so a session that never annotates never sees it, and the one that does has work to lose.
     let confirm_discard = config.confirm_discard.unwrap_or(true);
 
+    // Config > default; no env var. Defaults OFF: the viewer opens as a directory tree unless
+    // the user opts into the session-companion launch; the `s` toggle works either way.
+    let session_view = config.session_view.unwrap_or(false);
+
     let update_check = match config.update_check {
         Some(b) => b,
         None => get_env("HERDR_FILE_VIEWER_NO_UPDATE_CHECK").is_none(),
@@ -575,6 +586,7 @@ pub fn resolve(config: &Config, get_env: impl Fn(&str) -> Option<String>) -> Eff
         changed_only,
         changed_file_view,
         baseline,
+        session_view,
         update_check,
         confirm_discard,
         scroll_lines,
@@ -980,6 +992,24 @@ mod tests {
             resolve(&config, |_| None).changed_file_view,
             crate::view_policy::ChangedFileView::Diff
         );
+    }
+
+    #[test]
+    fn session_view_parses_resolves_and_defaults_off() {
+        let (config, outcome) = parse_config("session_view = true\n");
+        assert!(matches!(outcome, LoadOutcome::Loaded));
+        assert_eq!(config.session_view, Some(true));
+        assert!(resolve(&config, |_| None).session_view);
+        // Absent → off: the viewer opens as a directory tree unless opted in.
+        assert!(!resolve(&Config::default(), |_| None).session_view);
+    }
+
+    #[test]
+    fn session_view_wrong_type_degrades_the_whole_config_to_defaults() {
+        let (config, outcome) = parse_config("session_view = \"yes\"\nhide_dotfiles = true\n");
+        assert!(matches!(outcome, LoadOutcome::Malformed(_)));
+        assert_eq!(config.session_view, None);
+        assert!(!resolve(&config, |_| None).session_view);
     }
 
     #[test]

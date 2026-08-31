@@ -11421,6 +11421,7 @@ fn open_help_orders_optional_sections_after_whats_new_and_keeps_independent_scro
         changed_only: false,
         changed_file_view: herdr_file_viewer::view_policy::ChangedFileView::Diff,
         baseline: None,
+        session_view: false,
         update_check: true,
         confirm_discard: true,
         scroll_lines: 3,

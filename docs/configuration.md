@@ -45,7 +45,7 @@ A config key always wins. Only two keys have an environment-variable fallback be
 and built-in default: `editor` (`$EDITOR`) and `update_check`
 (`$HERDR_FILE_VIEWER_NO_UPDATE_CHECK`). These two use a `config > env > default` chain. Every other
 key (`markdown`, `diff`, `syntax`, `open`, `reveal`, `hide_dotfiles`, `show_ignored`,
-`compact_dirs`, `expand_changed`, `changed_only`, `changed_file_view`, `baseline`,
+`compact_dirs`, `expand_changed`, `changed_only`, `changed_file_view`, `baseline`, `session_view`,
 `confirm_discard`, `scroll_lines`, `tree_width`, `tree_position`, `tree_max_cols`,
 `open_direction`, `preview_max_lines`, `preview_max_kib`) has no applicable environment variable; for those it's
 `config > default` only.
@@ -71,6 +71,8 @@ expand_changed = false      # true to open the folders of files with uncommitted
 changed_only = false        # true to start on the changed-only tree (the `c` key still toggles)
 changed_file_view = "diff"  # changed files start in "diff", or use normal "content" by file type
 baseline = "base"           # force startup diff baseline: "base" or "head" (omit for context-smart default)
+session_view = false        # true to START in the session view (files the current Claude Code
+                            # session touched); the `s` key still toggles it either way
 update_check = true         # false disables all remote requests and their display
 confirm_discard = true      # false to discard annotations without confirming (on quit / worktree switch)
 scroll_lines = 3            # mouse-wheel step (content/search/help), a 1 to 10 scale: 1 slow · 3 medium · 6 fast · 10 max
@@ -104,6 +106,10 @@ When omitted or unrecognized, the viewer keeps its context-smart default: base o
 or worktree, `HEAD` on the default branch. The `?` Settings section shows the baseline actually
 selected at startup, including that context-smart result. The `b` key still toggles between the two
 baselines during the session. This does not enable git-status mode (`d`) or change any tree filter.
+`session_view = true` starts the viewer in the [session view](usage.md#session-view) — the
+Claude-Desktop-style companion presentation of the files the current Claude Code session touched —
+instead of the directory tree. The `s` key still leaves and re-enters it at any time, and with no
+Claude Code session recorded for the root the view is simply empty with a notice. Default `false`.
 
 `tree_width` and `tree_max_cols` **together** decide the tree's startup width, and the **smaller of
 the two wins**: the tree is drawn at `min(tree_width% of the pane, tree_max_cols)`. So if you set
@@ -263,6 +269,8 @@ customized).
 | | `prev_changed` | `[` | Jump the tree cursor to the previous changed file (wraps) |
 | **Session** | `dismiss_update` | `u` | Dismiss the advisory status row for this session; remember the current Spotlight across launches |
 | | `switch_worktree` | `W` | Open the worktree picker to re-root at another git worktree |
+| | `session_view` | `s` | Show the files the current Claude Code session touched, or restore the full tree |
+| | `session_picker` | `S` | Open the session picker to choose which Claude Code session is shown |
 | | `show_help` | `?` | Open the in-app help overlay (What's New, keys, settings, about) |
 | | `close` | `q`, `Esc` | Close the viewer and return to the prior pane |
 

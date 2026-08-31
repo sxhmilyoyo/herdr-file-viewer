@@ -36,6 +36,7 @@ pub mod repo_search;
 pub mod root;
 pub mod root_picker;
 pub mod search;
+pub mod session;
 pub mod text_layout;
 pub mod tree;
 pub mod update;

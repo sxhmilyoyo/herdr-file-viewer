@@ -157,6 +157,7 @@ fn config_example_documents_every_config_key() {
         "changed_only",
         "changed_file_view",
         "baseline",
+        "session_view",
         "update_check",
         "confirm_discard",
         "scroll_lines",

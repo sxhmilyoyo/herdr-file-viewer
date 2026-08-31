@@ -127,10 +127,29 @@ pub enum Prepared {
 /// (AC-N5), and a FIFO/device/dir is never opened (no hang, no garbage). Such paths return an
 /// [`Prepared::Unavailable`] placeholder explaining why no preview is available.
 pub fn classify(root: &Path, path: &Path, caps: Caps) -> Prepared {
-    let Ok(canon_root) = root.canonicalize() else {
-        return Prepared::Unavailable {
-            reason: UnavailableReason::Missing,
-        };
+    classify_within(Some(root), path, caps)
+}
+
+/// [`classify`] for a **session-view outside-root member**: the containment check is
+/// deliberately waived — the path is one the user's agent session explicitly touched, shown by
+/// the outside-root section's display-not-browse carve-out (ADR-0012) — while every other guard
+/// (regular file only, bounded read, NUL check, downstream escape neutralization) stays exactly
+/// as for an in-root file. Never used for ordinary tree rows.
+pub fn classify_outside_root(path: &Path, caps: Caps) -> Prepared {
+    classify_within(None, path, caps)
+}
+
+fn classify_within(root: Option<&Path>, path: &Path, caps: Caps) -> Prepared {
+    let canon_root = match root {
+        Some(root) => match root.canonicalize() {
+            Ok(canon_root) => Some(canon_root),
+            Err(_) => {
+                return Prepared::Unavailable {
+                    reason: UnavailableReason::Missing,
+                };
+            }
+        },
+        None => None,
     };
     let canonical = match path.canonicalize() {
         Ok(path) => path,
@@ -153,7 +172,9 @@ pub fn classify(root: &Path, path: &Path, caps: Caps) -> Prepared {
             return Prepared::Unavailable { reason };
         }
     };
-    if !canonical.starts_with(&canon_root) {
+    if let Some(canon_root) = canon_root
+        && !canonical.starts_with(&canon_root)
+    {
         return Prepared::Unavailable {
             reason: UnavailableReason::OutsideViewedRoot,
         }; // escapes the root (AC-N5)
