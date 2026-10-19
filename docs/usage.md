@@ -382,7 +382,9 @@ herdr-file-viewer hook uninstall    # removes exactly what install added
 
 `install` edits only your **user-scope** Claude Code settings (`$CLAUDE_CONFIG_DIR/settings.json`,
 else `~/.claude/settings.json`), adds one entry per event alongside whatever hooks you already
-have, and is idempotent; running Claude Code sessions pick it up after a restart or `/hooks`.
+have, and is idempotent; running Claude Code sessions pick it up within a few seconds (Claude
+Code watches its settings files), so restart one only if it does not. Every entry but the
+pre-command stamp runs asynchronously, so the hook adds no wait to the agent's tool calls.
 Run it again after updating the plugin if `hook status` reports the registered binary is gone.
 The log lives under the plugin's own state directory
 (`$XDG_STATE_HOME/herdr/plugins/herdr-file-viewer/sessions/<session-id>.jsonl`, the directory

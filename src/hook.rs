@@ -39,12 +39,19 @@ pub enum HookCommand {
     Help,
 }
 
-/// The events and matchers the hook registers for.
-pub const EVENTS: [(&str, &str); 4] = [
-    ("SessionStart", ""),
-    ("PreToolUse", "Bash"),
-    ("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Read|Bash"),
-    ("UserPromptSubmit", ""),
+/// The events and matchers the hook registers for, and whether each entry runs asynchronously.
+/// The hook never blocks or answers Claude Code, so everything runs off the agent's critical
+/// path (`async`) — except the `PreToolUse` stamp, which must be on disk before the Bash command
+/// starts for the disk scan to be bounded.
+pub const EVENTS: [(&str, &str, bool); 4] = [
+    ("SessionStart", "", true),
+    ("PreToolUse", "Bash", false),
+    (
+        "PostToolUse",
+        "Edit|Write|MultiEdit|NotebookEdit|Read|Bash",
+        true,
+    ),
+    ("UserPromptSubmit", "", true),
 ];
 
 /// Seconds Claude Code waits for one hook invocation before giving up on it.
@@ -261,7 +268,9 @@ pub fn records_for(
                     }
                 }
                 "NotebookEdit" => {
-                    if let Some(p) = input_path("notebook_path") {
+                    // Its input name is not documented; accept either spelling.
+                    if let Some(p) = input_path("notebook_path").or_else(|| input_path("file_path"))
+                    {
                         file(Activity::Update, p, Evidence::Tool, Some(tool));
                     }
                 }
@@ -625,21 +634,25 @@ pub fn install_into(settings: &mut Value, command: &str) -> bool {
         *hooks = Value::Object(Default::default());
     }
     let hooks = hooks.as_object_mut().expect("made an object");
-    for (event, matcher) in EVENTS {
+    for (event, matcher, run_async) in EVENTS {
         let entries = hooks
             .entry(event)
             .or_insert_with(|| Value::Array(Vec::new()));
         if !entries.is_array() {
             *entries = Value::Array(Vec::new());
         }
-        entries.as_array_mut().expect("made an array").push(json!({
-            "matcher": matcher,
-            "hooks": [{
-                "type": "command",
-                "command": command,
-                "timeout": HOOK_TIMEOUT_SECS,
-            }],
-        }));
+        let mut handler = json!({
+            "type": "command",
+            "command": command,
+            "timeout": HOOK_TIMEOUT_SECS,
+        });
+        if run_async {
+            handler["async"] = Value::Bool(true);
+        }
+        entries
+            .as_array_mut()
+            .expect("made an array")
+            .push(json!({ "matcher": matcher, "hooks": [handler] }));
     }
     *settings != before
 }
@@ -718,20 +731,21 @@ fn install() -> Result<String, String> {
     let exe = exe.canonicalize().unwrap_or(exe);
     let command = hook_command(&exe);
     let mut settings = read_settings(&path)?;
-    if installed_command(&settings).as_deref() == Some(command.as_str()) {
+    // Idempotence is judged on the whole registration (events, matchers, flags), not just the
+    // command: an older install of the same binary with a different entry shape is refreshed.
+    if !install_into(&mut settings, &command) {
         return Ok(format!(
             "Session hook already installed in {}:\n  {command}",
             path.display()
         ));
     }
-    install_into(&mut settings, &command);
     write_settings(&path, &settings)?;
     Ok(format!(
-        "Session hook installed in {} for {}:\n  {command}\nRunning Claude Code sessions pick it up after a restart (or `/hooks`).",
+        "Session hook installed in {} for {}:\n  {command}\nRunning Claude Code sessions pick it up within a few seconds; restart one that does not.",
         path.display(),
         EVENTS
             .iter()
-            .map(|(e, _)| *e)
+            .map(|(e, _, _)| *e)
             .collect::<Vec<_>>()
             .join(", ")
     ))
@@ -1003,7 +1017,7 @@ mod tests {
         assert_eq!(settings, once);
         assert_eq!(installed_command(&settings).as_deref(), Some(cmd.as_str()));
         // Every event carries exactly one entry of ours, alongside the others.
-        for (event, matcher) in EVENTS {
+        for (event, matcher, run_async) in EVENTS {
             let entries = settings["hooks"][event].as_array().unwrap();
             let ours: Vec<_> = entries
                 .iter()
@@ -1012,7 +1026,20 @@ mod tests {
             assert_eq!(ours.len(), 1, "{event}");
             assert_eq!(ours[0]["matcher"], json!(matcher));
             assert_eq!(ours[0]["hooks"][0]["timeout"], json!(HOOK_TIMEOUT_SECS));
+            // Off the critical path everywhere but the PreToolUse stamp, which must land first.
+            assert_eq!(
+                ours[0]["hooks"][0].get("async"),
+                run_async.then(|| json!(true)).as_ref(),
+                "{event}"
+            );
         }
+        assert!(
+            !EVENTS
+                .iter()
+                .find(|(e, _, _)| *e == "PreToolUse")
+                .unwrap()
+                .2
+        );
         assert_eq!(
             settings["hooks"]["SessionStart"].as_array().unwrap().len(),
             2
