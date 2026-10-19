@@ -28,6 +28,7 @@ struct RawContext {
     cwd: Option<String>,
     base_branch: Option<String>,
     workspace_id: Option<String>,
+    focused_pane_id: Option<String>,
 }
 
 /// Build a `LaunchContext` from the process environment: the injected context JSON, falling
@@ -82,5 +83,10 @@ pub fn parse_context(json: Option<&str>, fallback_cwd: PathBuf) -> LaunchContext
         cwd,
         base_branch: raw.base_branch,
         workspace_id: raw.workspace_id.filter(|s| !s.is_empty()),
+        // Validated here, at the boundary, so no later caller can forget: the id goes into a
+        // herdr argv (`agent get <id>`), and a flag-shaped id would option-inject it.
+        focused_pane_id: raw
+            .focused_pane_id
+            .filter(|id| crate::launch::is_flag_safe(id)),
     }
 }

@@ -82,11 +82,75 @@ pub fn project_slug(root: &Path) -> String {
         .collect()
 }
 
+/// Claude Code's project store: `<home>/.claude/projects`, one slug directory per working dir.
+pub fn projects_root(home: &Path) -> PathBuf {
+    home.join(".claude").join("projects")
+}
+
 /// Where Claude Code keeps `root`'s session transcripts: `<home>/.claude/projects/<slug>`.
 pub fn projects_dir(home: &Path, root: &Path) -> PathBuf {
-    home.join(".claude")
-        .join("projects")
-        .join(project_slug(root))
+    projects_root(home).join(project_slug(root))
+}
+
+/// A session id is safe to use as a transcript file stem iff it is a non-empty token of
+/// `[A-Za-z0-9-]` (Claude Code session ids are UUIDs). Anything else — a path separator, a dot
+/// segment, a flag-shaped prefix — is refused rather than joined into a path.
+pub fn is_safe_session_id(id: &str) -> bool {
+    id.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// The transcript for a session id: `<slug dir of root>/<id>.jsonl` when it exists (the common
+/// case), else the first `<projects>/*/<id>.jsonl` found — a session started in a subdirectory
+/// of the root, or in another worktree, lives under a different slug than the viewer derives.
+/// One file per session id across the store (verified), so the first hit is the only hit. `None`
+/// for an unsafe id or when no project directory holds it (a brand-new session that has not
+/// written its transcript yet degrades to the caller's fallback).
+pub fn transcript_for_session_id(home: &Path, root: &Path, id: &str) -> Option<PathBuf> {
+    if !is_safe_session_id(id) {
+        return None;
+    }
+    let file = format!("{id}.jsonl");
+    let direct = projects_dir(home, root).join(&file);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let mut dirs: Vec<PathBuf> = fs::read_dir(projects_root(home))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort(); // deterministic when the store is scanned
+    dirs.into_iter()
+        .map(|d| d.join(&file))
+        .find(|p| p.is_file())
+}
+
+/// The Claude Code session id herdr reports for a pane, parsed from `herdr agent get <pane>`
+/// JSON: `result.agent.agent_session.value`, accepted only when the agent is `claude` and the
+/// reference kind is `id` (herdr reports *paths* for some other agents). Fail-soft: an
+/// `agent_not_found` error reply, another agent kind, or an unsafe value is `None`.
+///
+/// Reply shape verified against herdr 0.9.4:
+/// `{"id":"cli:agent:get","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude",
+/// "kind":"id","source":"herdr:claude","value":"<uuid>"},…},"type":"agent_info"}}`; a pane
+/// without an agent answers `{"error":{"code":"agent_not_found",…}}` with a non-zero exit.
+pub fn agent_session_id_from_json(json: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(json).ok()?;
+    let agent = v.pointer("/result/agent")?;
+    if agent.get("agent").and_then(Value::as_str) != Some("claude") {
+        return None;
+    }
+    let session = agent.get("agent_session")?;
+    if session.get("kind").and_then(Value::as_str) != Some("id") {
+        return None;
+    }
+    session
+        .get("value")
+        .and_then(Value::as_str)
+        .filter(|id| is_safe_session_id(id))
+        .map(str::to_owned)
 }
 
 /// The user's home directory from the environment (`$HOME`; `%USERPROFILE%` on Windows), which
@@ -607,5 +671,60 @@ mod tests {
         assert_eq!(Category::Created.glyph(), '+');
         assert_eq!(Category::Updated.glyph(), '~');
         assert_eq!(Category::Mentioned.glyph(), '·');
+    }
+
+    #[test]
+    fn session_ids_are_uuid_shaped_tokens_only() {
+        assert!(is_safe_session_id("3a744a71-5cce-481b-8107-db5bf2f355d9"));
+        assert!(is_safe_session_id("abc"));
+        assert!(!is_safe_session_id(""));
+        assert!(!is_safe_session_id("../../etc/passwd"));
+        assert!(!is_safe_session_id("a/b"));
+        assert!(!is_safe_session_id("a.jsonl"));
+        assert!(!is_safe_session_id("--flag"));
+    }
+
+    /// The reply shape verified against herdr 0.9.4 (`herdr agent get <pane>`).
+    const AGENT_GET_CLAUDE: &str = r#"{"id":"cli:agent:get","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"3a744a71-5cce-481b-8107-db5bf2f355d9"},"agent_status":"working","cwd":"/r","focused":true,"name":"x","pane_id":"w1:p1Q","revision":1,"tab_id":"w1:tF","workspace_id":"w1"},"type":"agent_info"}}"#;
+
+    #[test]
+    fn herdr_agent_reply_yields_the_claude_session_id() {
+        assert_eq!(
+            agent_session_id_from_json(AGENT_GET_CLAUDE).as_deref(),
+            Some("3a744a71-5cce-481b-8107-db5bf2f355d9")
+        );
+    }
+
+    #[test]
+    fn herdr_agent_reply_without_a_claude_id_session_is_ignored() {
+        // A pane without an agent (herdr exits non-zero; the body is still parsed defensively).
+        assert_eq!(
+            agent_session_id_from_json(
+                r#"{"error":{"code":"agent_not_found","message":"agent target w1:p34 not found"},"id":"cli:agent:get"}"#
+            ),
+            None
+        );
+        // Another agent kind: its session is not a Claude Code transcript.
+        assert_eq!(
+            agent_session_id_from_json(
+                &AGENT_GET_CLAUDE.replace("\"agent\":\"claude\"", "\"agent\":\"codex\"")
+            ),
+            None
+        );
+        // A path-kind reference is not an id.
+        assert_eq!(
+            agent_session_id_from_json(
+                &AGENT_GET_CLAUDE.replace("\"kind\":\"id\"", "\"kind\":\"path\"")
+            ),
+            None
+        );
+        // A hostile value never becomes a file name.
+        assert_eq!(
+            agent_session_id_from_json(
+                &AGENT_GET_CLAUDE.replace("3a744a71-5cce-481b-8107-db5bf2f355d9", "../../.bashrc")
+            ),
+            None
+        );
+        assert_eq!(agent_session_id_from_json("not json"), None);
     }
 }

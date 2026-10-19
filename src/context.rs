@@ -15,4 +15,9 @@ pub struct LaunchContext {
     /// The herdr workspace id the viewer was launched from (used for the agent-active overlay).
     /// Absent when herdr did not inject one; must degrade silently to `None` (AC-15).
     pub workspace_id: Option<String>,
+    /// The herdr pane the viewer was opened beside (`focused_pane_id`), already validated as
+    /// flag-safe so it can go straight into a herdr argv. The session view asks herdr which
+    /// Claude Code session that pane runs. Absent outside herdr or when the host sent nothing
+    /// usable; must degrade silently to `None` (AC-15).
+    pub focused_pane_id: Option<String>,
 }

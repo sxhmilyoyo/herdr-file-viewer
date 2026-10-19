@@ -176,3 +176,23 @@ fn relative_or_missing_root_override_is_ignored() {
     let ctx = apply_root_override(picked_ctx(), Some(&abs("/no/such/dir")), |_| false);
     assert_eq!(ctx, picked_ctx());
 }
+
+#[test]
+fn focused_pane_id_is_kept_only_when_flag_safe() {
+    // The id goes into a herdr argv (`agent get <id>`), so it is validated at the boundary.
+    let ctx = parse_context(
+        Some(r#"{"focused_pane_cwd":"/w","focused_pane_id":"w1:p7"}"#),
+        PathBuf::from("/fallback"),
+    );
+    assert_eq!(ctx.focused_pane_id, Some("w1:p7".to_string()));
+    for hostile in [
+        r#"{"focused_pane_id":"--version"}"#,
+        r#"{"focused_pane_id":"w1:p7 x"}"#,
+        r#"{"focused_pane_id":""}"#,
+        r#"{"focused_pane_id":7}"#,
+        r#"{}"#,
+    ] {
+        let ctx = parse_context(Some(hostile), PathBuf::from("/fallback"));
+        assert_eq!(ctx.focused_pane_id, None, "{hostile}");
+    }
+}

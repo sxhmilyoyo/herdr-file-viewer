@@ -4,7 +4,10 @@
 
 use super::*;
 use crate::presenter::{SessionPickerRowView, SessionPickerView};
-use crate::session::{Follower, SessionSet, home_dir, list_sessions, projects_dir, session_title};
+use crate::session::{
+    Follower, SessionSet, agent_session_id_from_json, home_dir, list_sessions, projects_dir,
+    session_title, transcript_for_session_id,
+};
 use std::time::{Duration, SystemTime};
 
 /// How often the live-follow may stat the followed transcripts. A stat is cheap, but the event
@@ -72,7 +75,8 @@ impl Controller {
 
     /// Enter (or re-enter) the session view. `explicit` carries a picker-chosen transcript;
     /// `None` keeps a previously chosen one (an explicit choice holds until a worktree switch,
-    /// another choice, or exit) or auto-follows the newest transcript for the root.
+    /// another choice, or exit) or auto-follows the [preferred](Self::preferred_transcript)
+    /// transcript: the session herdr names for the accompanied pane, else the root's newest.
     pub(super) fn enter_session_view(&mut self, explicit: Option<PathBuf>) {
         // Mutually exclusive with the git filters: each replaces what the tree shows.
         self.changed_only = false;
@@ -94,10 +98,10 @@ impl Controller {
             None => {
                 if !self.session_explicit || self.session_follower.is_none() {
                     self.session_explicit = false;
-                    // Keep the existing follower when it already points at the newest transcript
-                    // (or when there is no newer candidate): a `s` toggle re-entry or startup
+                    // Keep the existing follower when it already points at the preferred
+                    // transcript (or when there is no candidate): a `s` toggle re-entry or startup
                     // must not re-ingest a large transcript it has already consumed.
-                    match self.newest_transcript() {
+                    match self.preferred_transcript() {
                         Some(newest)
                             if self
                                 .session_follower
@@ -172,16 +176,19 @@ impl Controller {
         }
         self.session_checked = Some(now);
         let mut changed = false;
-        // Auto mode follows the newest transcript: a fresh `claude` session in this root takes
-        // over the view. An explicit picker choice holds instead. Re-scanned on its own, much
-        // coarser cadence ([`SESSION_RESCAN_INTERVAL`]) so two concurrently-live sessions
-        // trading mtime leadership can't swap the member set twice a second.
+        // Auto mode follows the preferred transcript: the session herdr names for the
+        // accompanied pane (so a `/clear` or `/resume` there is followed, and a sibling pane's
+        // session never takes over), else the newest for the root, where a fresh `claude`
+        // session takes over the view. An explicit picker choice holds instead. Re-scanned on
+        // its own, much coarser cadence ([`SESSION_RESCAN_INTERVAL`]) so two concurrently-live
+        // sessions trading mtime leadership can't swap the member set twice a second, and so the
+        // herdr round trip happens at most every few seconds.
         let rescan_due = self
             .session_rescanned
             .is_none_or(|t| now.duration_since(t) >= SESSION_RESCAN_INTERVAL);
         if !self.session_explicit && rescan_due {
             self.session_rescanned = Some(now);
-            if let Some(newest) = self.newest_transcript()
+            if let Some(newest) = self.preferred_transcript()
                 && self
                     .session_follower
                     .as_ref()
@@ -316,6 +323,31 @@ impl Controller {
     fn newest_transcript(&self) -> Option<PathBuf> {
         let dir = self.sessions_dir()?;
         list_sessions(&dir).into_iter().next().map(|s| s.path)
+    }
+
+    /// The transcript auto mode follows (CONTEXT.md "current session"): the Claude Code session
+    /// herdr names for the pane the viewer accompanies when herdr can name one and its transcript
+    /// is on disk, else the most recently modified transcript for the root.
+    fn preferred_transcript(&self) -> Option<PathBuf> {
+        self.herdr_session_transcript()
+            .or_else(|| self.newest_transcript())
+    }
+
+    /// Ask herdr which Claude Code session runs in the accompanied pane — `herdr agent get
+    /// <pane_id>` (argv verified against herdr 0.9.4; reply shape documented on
+    /// [`agent_session_id_from_json`]) — and locate its transcript. Every failure degrades to
+    /// `None`, i.e. the newest-transcript rule: no pane id (outside herdr), no herdr, a pane
+    /// without an agent (`agent_not_found`), another agent kind, an unsafe id, or a session whose
+    /// transcript is not written yet. The pane id was validated flag-safe at the host boundary.
+    fn herdr_session_transcript(&self) -> Option<PathBuf> {
+        let pane = self.our_focused_pane_id.as_deref()?;
+        let json = self
+            .herdr
+            .as_ref()?
+            .run_json(&["agent", "get", pane])
+            .ok()?;
+        let id = agent_session_id_from_json(&json)?;
+        transcript_for_session_id(&home_dir()?, &self.root, &id)
     }
 }
 

@@ -215,6 +215,9 @@ pub fn run(open_flag: Option<String>) -> io::Result<()> {
         Box::new(crate::herdr::LiveHerdr::from_env()),
         ctx.workspace_id.clone(),
     );
+    // The pane the viewer was opened beside: the session view asks herdr which Claude Code
+    // session it runs, so the view follows that session rather than the newest transcript.
+    controller.set_focused_pane_id(ctx.focused_pane_id.clone());
     // Inject the live OS opener for the `O` / `R` hand-offs (AC-13). Non-blocking: unlike the
     // editor hand-off it does NOT suspend the TUI; the opener runs with stdio redirected to null
     // so it cannot draw onto our screen. `with_overrides` layers the config's `open`/`reveal`

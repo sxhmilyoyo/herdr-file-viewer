@@ -1040,6 +1040,10 @@ pub struct Controller {
     /// The viewer's own herdr workspace id (the agent-overlay's Tier-1 hint). Session-level —
     /// survives a re-root unchanged.
     our_workspace_id: Option<String>,
+    /// The herdr pane the viewer accompanies (the launch context's `focused_pane_id`, already
+    /// flag-safe). The session view asks herdr which Claude Code session it runs. Session-level —
+    /// survives a re-root unchanged.
+    our_focused_pane_id: Option<String>,
     /// The launch base-branch hint (the branch a worktree forked from), carried into a re-root's
     /// re-resolution so the post-switch Base-mode baseline can recover the common shared-base case.
     /// Session-level — survives a re-root unchanged: the herdr per-worktree
@@ -1235,6 +1239,7 @@ impl Controller {
             applied_seq: 0,
             herdr: None,
             our_workspace_id: None,
+            our_focused_pane_id: None,
             base_branch,
             current_branch,
             opener: None,
@@ -1754,6 +1759,14 @@ impl Controller {
     pub fn set_host(&mut self, herdr: Box<dyn HerdrCli>, workspace_id: Option<String>) {
         self.herdr = Some(herdr);
         self.our_workspace_id = workspace_id;
+    }
+
+    /// Inject the herdr pane id the viewer was opened beside (the launch context's
+    /// `focused_pane_id`), so the session view can ask herdr which Claude Code session that pane
+    /// runs instead of guessing from transcript mtimes. Session-level like
+    /// [`set_host`](Self::set_host); `None` ⇒ the newest-transcript rule alone.
+    pub fn set_focused_pane_id(&mut self, pane_id: Option<String>) {
+        self.our_focused_pane_id = pane_id;
     }
 
     /// Inject the OS opener seam used by the `O` / `R` hand-offs (open-with-default-app /

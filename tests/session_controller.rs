@@ -11,6 +11,7 @@ use herdr_file_viewer::controller::{
     RenderResult, RootProviders,
 };
 use herdr_file_viewer::git::{Baseline, Status};
+use herdr_file_viewer::herdr::HerdrCli;
 use herdr_file_viewer::intent::Intent;
 use herdr_file_viewer::session::projects_dir;
 use herdr_file_viewer::view_policy::ViewMode;
@@ -348,4 +349,133 @@ fn session_jump_cycles_member_files() {
             .is_some_and(|n| n.contains("wrapped to the first")),
         "wrap notice expected"
     );
+}
+
+/// A `herdr agent get <pane>` fake answering one fixed reply. The argv is pinned here so a herdr
+/// CLI change cannot silently break the lookup (verified against herdr 0.9.4).
+struct AgentGetFake {
+    reply: Option<String>,
+}
+impl HerdrCli for AgentGetFake {
+    fn run_json(&self, args: &[&str]) -> std::io::Result<String> {
+        assert_eq!(args, ["agent", "get", "w1:p7"]);
+        self.reply
+            .clone()
+            .ok_or_else(|| std::io::Error::other("herdr exited non-zero"))
+    }
+}
+
+/// herdr's reply for a Claude pane whose session id is `uuid` (shape verified against 0.9.4).
+fn agent_get_reply(uuid: &str) -> String {
+    format!(
+        r#"{{"id":"cli:agent:get","result":{{"agent":{{"agent":"claude","agent_session":{{"agent":"claude","kind":"id","source":"herdr:claude","value":"{uuid}"}},"agent_status":"idle","pane_id":"w1:p7"}},"type":"agent_info"}}}}"#
+    )
+}
+
+/// Two transcripts for the root: the herdr-named one (older) and a sibling pane's (newer).
+fn two_sessions(root: &Path, uuid: &str) {
+    fs::write(root.join("mine.rs"), "x").unwrap();
+    fs::write(root.join("sibling.rs"), "x").unwrap();
+    write_transcript(
+        root,
+        &format!("{uuid}.jsonl"),
+        &create_line(&root.join("mine.rs")),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20)); // distinct mtimes
+    write_transcript(
+        root,
+        "sibling.jsonl",
+        &create_line(&root.join("sibling.rs")),
+    );
+}
+
+fn with_herdr(root: &Path, reply: Option<String>) -> Controller {
+    let mut ctrl = controller(root, false, BTreeMap::new());
+    ctrl.set_host(Box::new(AgentGetFake { reply }), None);
+    ctrl.set_focused_pane_id(Some("w1:p7".to_string()));
+    ctrl
+}
+
+#[test]
+fn herdr_named_session_wins_over_the_newest_transcript() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5a0";
+    two_sessions(root.path(), uuid);
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply(uuid)));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(
+        file_rows(&ctrl),
+        ["mine.rs"],
+        "the accompanied pane's session, not the newest transcript"
+    );
+    // The 3 s rescan re-asks herdr: the sibling stays out even though it is newer.
+    ctrl.handle(Intent::Refresh);
+    assert_eq!(file_rows(&ctrl), ["mine.rs"]);
+}
+
+#[test]
+fn herdr_failure_falls_back_to_the_newest_transcript() {
+    let root = TempDir::new();
+    two_sessions(root.path(), "7819f839-922e-49eb-a080-63b3ab7ae5a1");
+
+    // `agent_not_found` (a pane without an agent) exits non-zero: the seam reports an error.
+    let mut ctrl = with_herdr(root.path(), None);
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(file_rows(&ctrl), ["sibling.rs"]);
+}
+
+#[test]
+fn herdr_named_session_under_another_slug_is_still_found() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5a2";
+    fs::write(root.path().join("mine.rs"), "x").unwrap();
+    fs::write(root.path().join("sibling.rs"), "x").unwrap();
+    // Claude Code was started in a subdirectory: its transcript lives under that slug.
+    write_transcript(
+        &root.path().join("sub"),
+        &format!("{uuid}.jsonl"),
+        &create_line(&root.path().join("mine.rs")),
+    );
+    write_transcript(
+        root.path(),
+        "sibling.jsonl",
+        &create_line(&root.path().join("sibling.rs")),
+    );
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply(uuid)));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(file_rows(&ctrl), ["mine.rs"]);
+}
+
+#[test]
+fn unsafe_session_id_from_herdr_is_refused() {
+    let root = TempDir::new();
+    two_sessions(root.path(), "7819f839-922e-49eb-a080-63b3ab7ae5a3");
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply("../../.bashrc")));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(
+        file_rows(&ctrl),
+        ["sibling.rs"],
+        "fell back to the newest transcript"
+    );
+}
+
+#[test]
+fn without_a_pane_id_the_newest_transcript_rule_applies() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5a4";
+    two_sessions(root.path(), uuid);
+
+    // herdr would name the older session, but outside herdr no pane id reaches the controller.
+    let mut ctrl = controller(root.path(), false, BTreeMap::new());
+    ctrl.set_host(
+        Box::new(AgentGetFake {
+            reply: Some(agent_get_reply(uuid)),
+        }),
+        None,
+    );
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(file_rows(&ctrl), ["sibling.rs"]);
 }

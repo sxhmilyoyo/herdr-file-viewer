@@ -6,7 +6,9 @@
 mod common;
 
 use common::TempDir;
-use herdr_file_viewer::session::{Category, Follower, list_sessions, session_title};
+use herdr_file_viewer::session::{
+    Category, Follower, list_sessions, projects_dir, session_title, transcript_for_session_id,
+};
 use std::fs;
 use std::io::Write as _;
 use std::path::Path;
@@ -201,4 +203,39 @@ fn a_huge_transcript_streams_in_over_successive_polls() {
             .contains_key(Path::new("last.rs")),
         "the remainder streams in over the following polls"
     );
+}
+
+/// `transcript_for_session_id`: the slug directory for the root is tried first, then every other
+/// project directory (a session started in a subdirectory or another worktree lives under a
+/// different slug); an unsafe id is refused before any path is formed.
+#[test]
+fn transcript_lookup_by_session_id_tries_the_root_slug_then_the_whole_store() {
+    let home = TempDir::new();
+    let root = Path::new("/repo/x");
+    let id = "3a744a71-5cce-481b-8107-db5bf2f355d9";
+
+    // Nothing on disk yet: a brand-new session that has not written its transcript.
+    assert_eq!(transcript_for_session_id(home.path(), root, id), None);
+
+    // Under another slug (Claude Code was started in a subdirectory of the root).
+    let other = projects_dir(home.path(), Path::new("/repo/x/sub"));
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join(format!("{id}.jsonl")), "").unwrap();
+    assert_eq!(
+        transcript_for_session_id(home.path(), root, id),
+        Some(other.join(format!("{id}.jsonl")))
+    );
+
+    // The root's own slug wins once it exists.
+    let direct = projects_dir(home.path(), root);
+    fs::create_dir_all(&direct).unwrap();
+    fs::write(direct.join(format!("{id}.jsonl")), "").unwrap();
+    assert_eq!(
+        transcript_for_session_id(home.path(), root, id),
+        Some(direct.join(format!("{id}.jsonl")))
+    );
+
+    // Unsafe ids never touch the filesystem.
+    assert_eq!(transcript_for_session_id(home.path(), root, "../x"), None);
+    assert_eq!(transcript_for_session_id(home.path(), root, ""), None);
 }
