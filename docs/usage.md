@@ -325,12 +325,12 @@ viewer still opens, but the status markers, filter, baseline, and diffs are degr
 
 ## Session view
 
-Press `s` to see **what the current Claude Code session touched** instead of the whole directory —
+Press `t` to see **what the current Claude Code session touched** instead of the whole directory —
 the companion-pane view of an agent's work, in the spirit of Claude Desktop's file panel. It works
 out of the box from the session's own transcript (`~/.claude/projects/…`), and it **follows the
 session live**: files appear as the agent works, without ever moving your cursor. Install the
 one-line [session hook](#the-session-hook) once and edits the agent makes through the shell appear
-too. Press `s` again to restore the full tree.
+too. Press `t` again to restore the full tree.
 
 - **Every touched file, categorized.** Each file row carries a glyph for how the session touched
   it — `+` created, `~` updated, `·` mentioned (read, or `@`-mentioned in a prompt) — with the
@@ -351,7 +351,7 @@ too. Press `s` again to restore the full tree.
   asks herdr which Claude Code session that pane runs, so a second `claude` in the same directory
   never takes over the view, and `/clear` or `/resume` in that pane is followed within a few
   seconds. Outside herdr (or for a pane without an agent) it follows the newest transcript for
-  this root instead. Press `S` to pick a different session (newest first, titles shown when a
+  this root instead. Press `T` to pick a different session (newest first, titles shown when a
   session was renamed with `/rename`); an explicit pick holds until a worktree switch, another
   pick, or exit.
 - **It composes.** `]` / `[` jump across the session's files, `Enter`/`p`/`e`/`O`/`y` all work on

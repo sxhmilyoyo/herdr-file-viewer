@@ -1,6 +1,6 @@
 //! e2e (pty): the session view end-to-end through the real binary — `s` presents the
 //! transcript-derived file set (found via `$HOME/.claude/projects/<slug>`) with the
-//! `[session]` title tag and the outside-root divider, and `s` again restores the full tree,
+//! `[session]` title tag and the outside-root divider, and `t` again restores the full tree,
 //! exiting cleanly.
 //!
 //! Unix-only, like the rest of the `expectrl`-pty e2e suite (see `tests/cli_smoke.rs`).
@@ -58,7 +58,7 @@ fn session_view_toggles_end_to_end() {
     // `s` enters the session view: the divider and the outside member render. (The `[session]`
     // title tag is asserted in the presenter tests — the pty's narrow tree column truncates
     // this fixture's long temp-dir title, so it is not a reliable stream marker here.)
-    s.send("s").expect("send session-view toggle");
+    s.send("t").expect("send session-view toggle");
     s.expect("outside root")
         .expect("the outside-root divider renders");
     s.expect("outside.txt")
@@ -71,8 +71,8 @@ fn session_view_toggles_end_to_end() {
     s.expect("OUT")
         .expect("an outside-root member previews like any file");
 
-    // `s` again restores the full tree (the non-member reappears in a fresh frame).
-    s.send("s").expect("send session-view toggle again");
+    // `t` again restores the full tree (the non-member reappears in a fresh frame).
+    s.send("t").expect("send session-view toggle again");
     s.expect("zz_other.rs")
         .expect("leaving the session view restores the full tree");
 

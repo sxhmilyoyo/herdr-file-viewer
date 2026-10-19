@@ -72,7 +72,7 @@ changed_only = false        # true to start on the changed-only tree (the `c` ke
 changed_file_view = "diff"  # changed files start in "diff", or use normal "content" by file type
 baseline = "base"           # force startup diff baseline: "base" or "head" (omit for context-smart default)
 session_view = false        # true to START in the session view (files the current Claude Code
-                            # session touched); the `s` key still toggles it either way
+                            # session touched); the `t` key still toggles it either way
 update_check = true         # false disables all remote requests and their display
 confirm_discard = true      # false to discard annotations without confirming (on quit / worktree switch)
 scroll_lines = 3            # mouse-wheel step (content/search/help), a 1 to 10 scale: 1 slow · 3 medium · 6 fast · 10 max
@@ -108,7 +108,7 @@ selected at startup, including that context-smart result. The `b` key still togg
 baselines during the session. This does not enable git-status mode (`d`) or change any tree filter.
 `session_view = true` starts the viewer in the [session view](usage.md#session-view) — the
 Claude-Desktop-style companion presentation of the files the current Claude Code session touched —
-instead of the directory tree. The `s` key still leaves and re-enters it at any time, and with no
+instead of the directory tree. The `t` key still leaves and re-enters it at any time, and with no
 Claude Code session recorded for the root the view is simply empty with a notice. Default `false`.
 The [session hook](usage.md#the-session-hook) that makes shell edits appear is not a config key:
 install it once with `herdr-file-viewer hook install`; the `?` Settings tab's `session_hook` row
@@ -272,8 +272,8 @@ customized).
 | | `prev_changed` | `[` | Jump the tree cursor to the previous changed file (wraps) |
 | **Session** | `dismiss_update` | `u` | Dismiss the advisory status row for this session; remember the current Spotlight across launches |
 | | `switch_worktree` | `W` | Open the worktree picker to re-root at another git worktree |
-| | `session_view` | `s` | Show the files the current Claude Code session touched, or restore the full tree |
-| | `session_picker` | `S` | Open the session picker to choose which Claude Code session is shown |
+| | `session_view` | `t` | Show the files the current Claude Code session touched, or restore the full tree |
+| | `session_picker` | `T` | Open the session picker to choose which Claude Code session is shown |
 | | `show_help` | `?` | Open the in-app help overlay (What's New, keys, settings, about) |
 | | `close` | `q`, `Esc` | Close the viewer and return to the prior pane |
 

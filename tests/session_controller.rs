@@ -1,5 +1,5 @@
 //! Session view + session picker — controller-level behavior over a fake `$HOME` transcript
-//! store: the `s` toggle, mutual exclusivity with the git filters, live-follow through
+//! store: the `t` toggle, mutual exclusivity with the git filters, live-follow through
 //! `poll()`, the `S` picker's explicit hold, refresh's newest re-resolution, and the startup
 //! config chain. Tree synthesis lives in `session_view.rs`; parsing in `session_transcript.rs`.
 
