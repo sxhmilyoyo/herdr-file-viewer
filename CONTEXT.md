@@ -42,20 +42,31 @@ Canonical vocabulary for this repo. Glossary only: no implementation detail, no 
   groups. Display-and-preview only: no git decoration, no **annotation**s. Its presence
   never enables browsing above the **root**.
 - **session transcript**: the on-disk record Claude Code keeps of one agent session in
-  its per-project directory; the **session view**'s only data source. Read-only input,
-  parsed defensively.
-- **current session**: the **session transcript** the **session view** presents: the
-  most recently active one for the **root** by default, or the one explicitly chosen in
-  the **session picker**. An explicit choice holds until a **worktree switch**, another
-  choice, or viewer exit; a **worktree switch** resets to the default. Session-only,
-  never persisted.
+  its per-project directory; the **session view**'s history source, used for a session
+  that has no **session activity log**. Read-only input, parsed defensively: its format
+  is Claude Code's own and may change between releases.
+- **session activity log**: the per-session record of file activity that the viewer's
+  own Claude Code hook writes as each tool call completes; the **session view**'s live
+  source whenever one exists for the **current session**, in which case the **session
+  transcript** is not consulted. Exact and immediate, but present only for sessions
+  started after the hook was installed. Read-only input to the viewer.
+- **current session**: the agent session the **session view** presents. By default it is
+  the session of the Claude Code agent in the herdr pane the viewer accompanies, when
+  herdr can name it, else the most recently active session for the **root**; or it is
+  the one explicitly chosen in the **session picker**. An explicit choice holds until a
+  **worktree switch**, another choice, or viewer exit; a **worktree switch** resets to
+  the default. Session-only, never persisted.
 - **session picker**: the keyboard-summoned overlay listing the **root**'s session
   transcripts; choosing one sets the **current session**. A sibling of the
   **worktree picker**.
-- **session file set**: the derived set of files the **current session** touched:
-  every file named by an agent file tool (read or write), by a user @-mention in a
-  prompt, or by a subagent's file tools within the same session. Side effects of shell
-  commands are never inferred. Each member carries one **session category**.
+- **touched**: said of a file and an agent session: the file was named by an agent file
+  tool (read or write) or by a user @-mention in a prompt; or Claude Code recorded a
+  shell command of the session editing it; or it was observed changing on disk under the
+  **root** while a shell command of the session ran. Shell *reads* are never inferred.
+  The umbrella that the **session category** refines.
+- **session file set**: the derived set of files the **current session** **touched**,
+  including files touched by a subagent's tools within the same session. Each member
+  carries one **session category**.
 - **session category**: the one label a **session file set** member displays: *created*
   (born in this session), *updated* (written to but pre-existing), or *mentioned* (read
   or @-mentioned only). The strongest wins: created ≻ updated ≻ mentioned. Shown as a
