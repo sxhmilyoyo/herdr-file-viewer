@@ -38,12 +38,21 @@ impl std::fmt::Display for Version {
     }
 }
 
+/// Parse the running build's own package version. Unlike a remote tag, the build may carry
+/// semver *build metadata* (`1.18.0+session`: a fork build of 1.18.0 that must compile from
+/// source), which does not affect precedence and is dropped before parsing. A pre-release
+/// suffix (`-rc1`) still yields `None`, as for tags.
+pub fn own_version(s: &str) -> Option<Version> {
+    let base = s.split_once('+').map_or(s, |(base, _metadata)| base);
+    Version::parse(base)
+}
+
 /// The version compiled into this binary (Cargo's package version).
 pub fn current() -> Version {
-    // The package version is always a valid triple (CI/clippy would reject otherwise), so this
-    // parse cannot fail in a real build; fall back to 0.0.0 rather than panic, keeping the
-    // "never crash" invariant even for a hand-mangled version string.
-    Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version {
+    // The package version is always a valid triple plus optional build metadata (CI/clippy would
+    // reject otherwise), so this parse cannot fail in a real build; fall back to 0.0.0 rather than
+    // panic, keeping the "never crash" invariant even for a hand-mangled version string.
+    own_version(env!("CARGO_PKG_VERSION")).unwrap_or(Version {
         major: 0,
         minor: 0,
         patch: 0,
@@ -58,6 +67,29 @@ pub fn newer_than_current(latest: Version) -> Option<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_version_drops_build_metadata_but_not_prerelease() {
+        let v = Version {
+            major: 1,
+            minor: 17,
+            patch: 0,
+        };
+        assert_eq!(own_version("1.17.0+session"), Some(v));
+        assert_eq!(own_version("1.17.0"), Some(v));
+        assert_eq!(own_version("1.17.0-rc1"), None);
+        // A remote tag carrying metadata is still not a stable release.
+        assert_eq!(Version::parse("1.17.0+session"), None);
+        // The compiled-in version always resolves (never the 0.0.0 fallback).
+        assert_ne!(
+            current(),
+            Version {
+                major: 0,
+                minor: 0,
+                patch: 0
+            }
+        );
+    }
 
     #[test]
     fn parses_plain_and_v_prefixed_triples() {
