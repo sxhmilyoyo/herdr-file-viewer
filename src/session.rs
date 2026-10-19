@@ -428,9 +428,15 @@ impl Follower {
 /// - **Read results** — `toolUseResult: {"file": {"filePath": …}, …}` → mentioned.
 /// - **User `@`-mentions** — an `attachment` entry of type `file` / `already_read_file`
 ///   with a `filename` → mentioned.
+/// - **Bash edit records** — `toolUseResult: {"bashEditDiff": {"changedFiles": […],
+///   "files": [{"filePath": …, "created": …}, …]}}`, Claude Code's own before/after record of the
+///   files a Bash command changed (the shape it documents for its PostToolUse hook payload;
+///   recorded in auto mode or with `bashEditDiffEnabled`): every path → updated, a `created`
+///   entry → created. Best-effort by Claude Code's own account, so it narrows the shell gap
+///   rather than closing it; the session activity log is the complete live source.
 ///
 /// Anything else — malformed JSON, unknown shapes, error results (plain strings), shell
-/// commands — is skipped without complaint (ADR-0011's fail-soft posture).
+/// command output — is skipped without complaint (ADR-0011's fail-soft posture).
 fn apply_line(members: &mut BTreeMap<PathBuf, Category>, line: &str) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return false;
@@ -452,6 +458,9 @@ fn apply_line(members: &mut BTreeMap<PathBuf, Category>, line: &str) -> bool {
         if let Some(p) = r.pointer("/file/filePath").and_then(Value::as_str) {
             changed |= record(members, p, Category::Mentioned);
         }
+        if let Some(diff) = r.get("bashEditDiff").filter(|d| d.is_object()) {
+            changed |= apply_bash_edit_diff(members, diff);
+        }
     }
     if v.get("type").and_then(Value::as_str) == Some("attachment")
         && let Some(a) = v.get("attachment")
@@ -462,6 +471,42 @@ fn apply_line(members: &mut BTreeMap<PathBuf, Category>, line: &str) -> bool {
         && let Some(p) = a.get("filename").and_then(Value::as_str)
     {
         changed |= record(members, p, Category::Mentioned);
+    }
+    changed
+}
+
+/// Fold Claude Code's Bash edit record into the member map. `changedFiles` lists every changed
+/// path (absolute, capped by Claude Code at 200); `files` carries the few it also diffed, each
+/// with `filePath` and an optional `created` flag — the only created/updated discriminator the
+/// record offers, so a `files` entry marked created promotes its path. Older records carry only
+/// `files`; both shapes are read. `unavailable` / `skipped` records list what they could, which
+/// is still real, so nothing is withheld on those flags.
+fn apply_bash_edit_diff(members: &mut BTreeMap<PathBuf, Category>, diff: &Value) -> bool {
+    let mut changed = false;
+    for p in diff
+        .get("changedFiles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        changed |= record(members, p, Category::Updated);
+    }
+    for file in diff
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(p) = file.get("filePath").and_then(Value::as_str) else {
+            continue;
+        };
+        let cat = if file.get("created").and_then(Value::as_bool) == Some(true) {
+            Category::Created
+        } else {
+            Category::Updated
+        };
+        changed |= record(members, p, cat);
     }
     changed
 }
@@ -671,6 +716,38 @@ mod tests {
         assert_eq!(Category::Created.glyph(), '+');
         assert_eq!(Category::Updated.glyph(), '~');
         assert_eq!(Category::Mentioned.glyph(), '·');
+    }
+
+    #[test]
+    fn bash_edit_records_count_as_updated_or_created() {
+        let f = fed(&[
+            // The documented hook shape: every changed path, plus diffs for a few of them.
+            r#"{"toolUseResult":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"bashEditDiff":{"changedFiles":["/r/a.rs","/r/b.rs","/r/new.rs"],"files":[{"filePath":"/r/a.rs","hunks":[]},{"filePath":"/r/new.rs","created":true,"hunks":[]}],"moreFiles":0}}}"#,
+            // The older files-only shape (observed in real transcripts).
+            r#"{"toolUseResult":{"stdout":"","stderr":"","bashEditDiff":{"files":[{"filePath":"/tmp/out/gen.rs","hunks":[{"oldStart":1,"oldLines":0,"newStart":1,"newLines":2,"lines":["+x","+y"]}]}]}}}"#,
+            // Flags never withhold what was listed; junk entries are skipped.
+            r#"{"toolUseResult":{"stdout":"","bashEditDiff":{"unavailable":true,"changedFiles":["/r/c.rs","relative.rs",7],"files":[{"hunks":[]}]}}}"#,
+        ]);
+        let set = f.set_for(Path::new("/r"));
+        assert_eq!(set.in_root.get(Path::new("a.rs")), Some(&Category::Updated));
+        assert_eq!(set.in_root.get(Path::new("b.rs")), Some(&Category::Updated));
+        assert_eq!(set.in_root.get(Path::new("c.rs")), Some(&Category::Updated));
+        assert_eq!(
+            set.in_root.get(Path::new("new.rs")),
+            Some(&Category::Created),
+            "the created flag is the only discriminator the record offers"
+        );
+        assert_eq!(
+            set.outside.get(Path::new("/tmp/out/gen.rs")),
+            Some(&Category::Updated)
+        );
+        assert_eq!(set.len(), 5);
+        // A plain Bash result (no record) still contributes nothing.
+        let mut g = Follower::new("/nowhere.jsonl");
+        assert!(!apply_line(
+            &mut g.members,
+            r#"{"toolUseResult":{"stdout":"ok","stderr":"","bashEditDiff":"not-an-object"}}"#
+        ));
     }
 
     #[test]
