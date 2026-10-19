@@ -850,6 +850,10 @@ pub struct Controller {
     /// The last auto-mode newest-transcript re-scan — a much coarser throttle than the
     /// append-follow, so two concurrently active sessions can't thrash the view.
     session_rescanned: Option<Instant>,
+    /// Whether the session hook is registered in Claude Code's settings, as `app::run` found it
+    /// at startup: `Some(false)` makes the session view say that shell edits may be missing;
+    /// `None` (unknown, or a test) says nothing.
+    session_hook_installed: Option<bool>,
     /// Which command a Diff/FullDiff render delegates to (`D`, cycling Delta →
     /// DeltaSideBySide → Raw). Carried
     /// across a re-root like the other display preferences (`show_ignored`, `hide_hidden`,
@@ -1181,6 +1185,7 @@ impl Controller {
             session_explicit: false,
             session_checked: None,
             session_rescanned: None,
+            session_hook_installed: None,
             diff_render_mode: DiffRenderMode::default(),
             status_mode: false,
             git_status: BTreeMap::new(),
@@ -1767,6 +1772,12 @@ impl Controller {
     /// [`set_host`](Self::set_host); `None` ⇒ the newest-transcript rule alone.
     pub fn set_focused_pane_id(&mut self, pane_id: Option<String>) {
         self.our_focused_pane_id = pane_id;
+    }
+
+    /// Inject whether the session hook is registered (see [`crate::hook::status`]); `None` when
+    /// unknown. Drives the session view's "shell edits may be missing" notice only.
+    pub fn set_session_hook_status(&mut self, installed: Option<bool>) {
+        self.session_hook_installed = installed;
     }
 
     /// Inject the OS opener seam used by the `O` / `R` hand-offs (open-with-default-app /

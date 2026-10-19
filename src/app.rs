@@ -118,11 +118,16 @@ pub fn run(open_flag: Option<String>) -> io::Result<()> {
     );
     // Wired values for the Settings display (AC-1..AC-4): built from the same controller startup
     // result as the live components, so `?` reports the baseline actually in effect.
+    // Whether the session hook is registered: read once here (one settings-file read), shown in
+    // `?` Settings and behind the session view's "shell edits may be missing" notice.
+    let session_hook = crate::hook::status();
+    controller.set_session_hook_status(session_hook);
     let settings_wired = settings_wired(
         &eff,
         controller.baseline(),
         current_os_kind(),
         platform_editor,
+        session_hook,
     );
     // Apply the config-driven startup hide-dotfiles default (AC-9). The interactive `.` toggle
     // still flips it later.
@@ -978,12 +983,14 @@ fn settings_wired(
     baseline: Baseline,
     os: crate::opener::OsKind,
     platform_editor: Option<std::ffi::OsString>,
+    session_hook: Option<bool>,
 ) -> crate::help::SettingsWired {
     crate::help::SettingsWired {
         editor: crate::config::effective_editor(eff, platform_editor),
         open: crate::opener::default_opener_display(os, crate::opener::OpenAction::Open),
         reveal: crate::opener::default_opener_display(os, crate::opener::OpenAction::Reveal),
         baseline,
+        session_hook,
     }
 }
 
@@ -1549,6 +1556,7 @@ mod tests {
             Baseline::Base,
             OsKind::Mac,
             Some(std::ffi::OsString::from("vi")),
+            None,
         );
         assert_eq!(
             w.editor,
@@ -1575,6 +1583,7 @@ mod tests {
             Baseline::Head,
             OsKind::Linux,
             Some(std::ffi::OsString::from("vi")),
+            None,
         );
         assert_eq!(w.baseline, Baseline::Head);
         assert_eq!(w.editor, Some(std::ffi::OsString::from("vi")));

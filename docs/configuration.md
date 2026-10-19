@@ -110,6 +110,9 @@ baselines during the session. This does not enable git-status mode (`d`) or chan
 Claude-Desktop-style companion presentation of the files the current Claude Code session touched —
 instead of the directory tree. The `s` key still leaves and re-enters it at any time, and with no
 Claude Code session recorded for the root the view is simply empty with a notice. Default `false`.
+The [session hook](usage.md#the-session-hook) that makes shell edits appear is not a config key:
+install it once with `herdr-file-viewer hook install`; the `?` Settings tab's `session_hook` row
+reports whether it is registered.
 
 `tree_width` and `tree_max_cols` **together** decide the tree's startup width, and the **smaller of
 the two wins**: the tree is drawn at `min(tree_width% of the pane, tree_max_cols)`. So if you set

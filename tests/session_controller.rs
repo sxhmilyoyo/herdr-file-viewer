@@ -6,6 +6,7 @@
 mod common;
 
 use common::TempDir;
+use herdr_file_viewer::activity;
 use herdr_file_viewer::controller::{
     Components, ContentProvider, Controller, EditorHandoff, EditorOutcome, GitService,
     RenderResult, RootProviders,
@@ -32,6 +33,9 @@ fn fake_home() -> &'static Path {
         // Edition 2024 marks env mutation unsafe (process-global). This is the only write, and
         // it happens-before every read via the OnceLock barrier.
         unsafe { std::env::set_var("HOME", dir.path()) };
+        // The activity log lives under the state dir: point it into the same fake home so a
+        // developer's real `$XDG_STATE_HOME` is never read or written by these tests.
+        unsafe { std::env::set_var("XDG_STATE_HOME", dir.path().join("state")) };
         dir
     })
     .path()
@@ -478,4 +482,139 @@ fn without_a_pane_id_the_newest_transcript_rule_applies() {
     );
     ctrl.handle(Intent::ToggleSessionView);
     assert_eq!(file_rows(&ctrl), ["sibling.rs"]);
+}
+
+/// Write a session activity log for `uuid` into the fake home's state dir.
+fn write_activity_log(uuid: &str, body: &str) -> PathBuf {
+    fake_home();
+    let dir = activity::log_dir().expect("the fake home provides a state dir");
+    fs::create_dir_all(&dir).unwrap();
+    let path = activity::log_path(&dir, uuid).unwrap();
+    fs::write(&path, body).unwrap();
+    path
+}
+
+fn log_line(activity: &str, path: &Path) -> String {
+    format!(
+        "{{\"kind\":\"file\",\"ts\":1,\"activity\":\"{activity}\",\"path\":\"{}\",\"evidence\":\"scan\",\"tool\":\"Bash\"}}\n",
+        path.display()
+    )
+}
+
+#[test]
+fn an_activity_log_takes_precedence_over_the_transcript() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5b0";
+    two_sessions(root.path(), uuid);
+    fs::write(root.path().join("logged.rs"), "x").unwrap();
+    write_activity_log(uuid, &log_line("create", &root.path().join("logged.rs")));
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply(uuid)));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(
+        file_rows(&ctrl),
+        ["logged.rs"],
+        "the log is the only source for its session: the transcript's member is not merged in"
+    );
+}
+
+#[test]
+fn a_log_appearing_later_switches_the_view_to_it() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5b1";
+    two_sessions(root.path(), uuid);
+    fs::write(root.path().join("logged.rs"), "x").unwrap();
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply(uuid)));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(
+        file_rows(&ctrl),
+        ["mine.rs"],
+        "transcript first: no log yet"
+    );
+
+    // The hook gets installed mid-session and opens the log: the rescan switches sources.
+    write_activity_log(uuid, &log_line("update", &root.path().join("logged.rs")));
+    ctrl.handle(Intent::Refresh);
+    assert_eq!(file_rows(&ctrl), ["logged.rs"]);
+}
+
+#[test]
+fn a_brand_new_session_with_only_a_log_is_followed() {
+    let root = TempDir::new();
+    let uuid = "7819f839-922e-49eb-a080-63b3ab7ae5b2";
+    fs::write(root.path().join("fresh.rs"), "x").unwrap();
+    fs::write(root.path().join("sibling.rs"), "x").unwrap();
+    // Only a sibling's transcript exists on disk; the named session has written no transcript
+    // yet, but the hook already recorded its first edit.
+    write_transcript(
+        root.path(),
+        "sibling.jsonl",
+        &create_line(&root.path().join("sibling.rs")),
+    );
+    write_activity_log(uuid, &log_line("create", &root.path().join("fresh.rs")));
+
+    let mut ctrl = with_herdr(root.path(), Some(agent_get_reply(uuid)));
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(file_rows(&ctrl), ["fresh.rs"]);
+}
+
+#[test]
+fn a_picked_session_uses_its_log_when_present() {
+    let root = TempDir::new();
+    fs::write(root.path().join("old.rs"), "x").unwrap();
+    fs::write(root.path().join("new.rs"), "x").unwrap();
+    fs::write(root.path().join("logged.rs"), "x").unwrap();
+    write_transcript(
+        root.path(),
+        "aaaa0000.jsonl",
+        &create_line(&root.path().join("old.rs")),
+    );
+    write_activity_log(
+        "aaaa0000",
+        &log_line("create", &root.path().join("logged.rs")),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write_transcript(
+        root.path(),
+        "bbbb0000.jsonl",
+        &create_line(&root.path().join("new.rs")),
+    );
+
+    let mut ctrl = controller(root.path(), false, BTreeMap::new());
+    ctrl.handle(Intent::ToggleSessionView);
+    assert_eq!(file_rows(&ctrl), ["new.rs"]);
+    ctrl.handle(Intent::OpenSessionPicker);
+    ctrl.handle(Intent::NavDown);
+    ctrl.handle(Intent::Activate);
+    assert_eq!(
+        file_rows(&ctrl),
+        ["logged.rs"],
+        "the pick resolves to that session's log"
+    );
+}
+
+#[test]
+fn a_missing_hook_is_announced_when_entering_the_session_view() {
+    let root = TempDir::new();
+    fs::write(root.path().join("a.rs"), "x").unwrap();
+    write_transcript(
+        root.path(),
+        "cccc0000.jsonl",
+        &create_line(&root.path().join("a.rs")),
+    );
+
+    let mut ctrl = controller(root.path(), false, BTreeMap::new());
+    ctrl.set_session_hook_status(Some(false));
+    ctrl.handle(Intent::ToggleSessionView);
+    let notice = ctrl.action_notice().unwrap_or_default();
+    assert!(
+        notice.contains("hook install"),
+        "names the remedy: {notice:?}"
+    );
+
+    let mut quiet = controller(root.path(), false, BTreeMap::new());
+    quiet.set_session_hook_status(Some(true));
+    quiet.handle(Intent::ToggleSessionView);
+    assert_eq!(quiet.action_notice(), None);
 }

@@ -52,9 +52,26 @@ assume that this content is hostile.
   sanitization every filesystem-derived string gets, and previewed member content flows through
   the standard untrusted-content pipeline above.
 
+- **The session hook and its activity log → opt-in, bounded, state-dir only.** The session hook
+  runs under Claude Code, once per file tool call, shell command, and prompt, and writes only to
+  the plugin's own state directory: one append-only log per session plus short-lived stamp files.
+  It never writes into a repository. Its input is Claude Code's hook payload, treated as
+  untrusted: the session id must be a UUID-shaped token before it becomes a file name, tool paths
+  are recorded as strings and lexically normalized by the viewer's reader (relative or
+  non-normalizable paths dropped there), and any malformed payload is a silent no-op — the hook
+  exits 0 without output in every case, so it can never block or fail a tool call. The disk scan
+  it runs around a shell command is read-only (an `.gitignore`-aware walk, pruned of build and
+  dependency trees, capped at 200 paths), and the one `git status` that classifies new files uses
+  the same hardened builder as every other git call. `hook install` / `hook uninstall` are the
+  only operations that modify a file outside the state directory — the user-scope Claude Code
+  settings — and they run only when invoked explicitly, add or remove exactly the plugin's own
+  entries, and write atomically.
+
 - **Injection guards.** Host-supplied pane ids are validated before they reach an argv (so a
-  flag-like id can't option-inject the herdr CLI). Paths are passed to `git` as raw `OsStr`
-  arguments after a within-root check (no traversal above the root, no arbitrary reads).
+  flag-like id can't option-inject the herdr CLI); that includes the focused pane id the session
+  view hands to `herdr agent get`, and the session id herdr answers with must be a UUID-shaped
+  token before it is joined into a transcript or log path. Paths are passed to `git` as raw
+  `OsStr` arguments after a within-root check (no traversal above the root, no arbitrary reads).
 
 - **Resource bounds.** File reads and captured renderer/diff output are size-capped, and external
   renderers run under a wall-clock timeout, so a huge or slow input degrades gracefully rather

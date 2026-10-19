@@ -227,6 +227,8 @@ pub struct SettingsWired {
     /// The baseline actually passed to the new controller after applying the optional config value
     /// or the root-aware automatic default.
     pub baseline: crate::git::Baseline,
+    /// Whether the session hook is registered in Claude Code's settings (`None`: could not tell).
+    pub session_hook: Option<bool>,
 }
 
 /// Assemble the "Settings" pane text (AC-15, AC-18): a first line reflecting the config
@@ -282,6 +284,11 @@ pub fn settings_text(
     let update_check = if eff.update_check { "on" } else { "off" };
     let confirm_discard = if eff.confirm_discard { "on" } else { "off" };
     let session_view = if eff.session_view { "on" } else { "off" };
+    let session_hook = match wired.session_hook {
+        Some(true) => "installed",
+        Some(false) => "not installed (run: herdr-file-viewer hook install)",
+        None => "unknown",
+    };
 
     // Keys are padded to the widest name (`preview_max_lines`, 17) so the `=` column lines up.
     format!(
@@ -298,6 +305,7 @@ pub fn settings_text(
          changed_file_view = {changed_file_view}\n\
          baseline          = {baseline}\n\
          session_view      = {session_view}\n\
+         session_hook      = {session_hook}\n\
          update_check      = {update_check}\n\
          confirm_discard   = {confirm_discard}\n\
          scroll_lines      = {scroll_lines}\n\
@@ -317,6 +325,7 @@ pub fn settings_text(
         changed_file_view = eff.changed_file_view.label(),
         baseline = baseline,
         session_view = session_view,
+        session_hook = session_hook,
         update_check = update_check,
         confirm_discard = confirm_discard,
         scroll_lines = eff.scroll_lines,
@@ -855,6 +864,7 @@ mod tests {
             open: "xdg-open".to_string(),
             reveal: "xdg-open".to_string(),
             baseline: crate::git::Baseline::Base,
+            session_hook: None,
         }
     }
 

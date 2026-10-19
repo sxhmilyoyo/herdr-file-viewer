@@ -259,15 +259,26 @@ struct FileFollower {
     /// with one `stat`. Left unset after a chunk-capped partial read, so the next poll
     /// continues immediately.
     seen: Option<(u64, SystemTime)>,
+    /// How one complete line folds into the member map: the transcript grammar
+    /// ([`apply_line`]) or the activity log's ([`crate::activity::apply_line`]).
+    apply: fn(&mut BTreeMap<PathBuf, Category>, &str) -> bool,
 }
 
 impl FileFollower {
     fn new(path: impl Into<PathBuf>) -> Self {
+        Self::with_apply(path, apply_line)
+    }
+
+    fn with_apply(
+        path: impl Into<PathBuf>,
+        apply: fn(&mut BTreeMap<PathBuf, Category>, &str) -> bool,
+    ) -> Self {
         Self {
             path: path.into(),
             offset: 0,
             carry: Vec::new(),
             seen: None,
+            apply,
         }
     }
 
@@ -338,7 +349,7 @@ impl FileFollower {
         self.carry = buf.split_off(split);
         let mut changed = false;
         for line in String::from_utf8_lossy(&buf).lines() {
-            changed |= apply_line(members, line);
+            changed |= (self.apply)(members, line);
         }
         (changed, self.offset >= len)
     }
@@ -350,30 +361,65 @@ impl FileFollower {
 /// activity — the membership contract includes it). Every file is read incrementally and
 /// bounded per poll; a shrunk or vanished file triggers a clean rebuild of the merged set.
 pub struct Follower {
-    main: FileFollower,
-    /// Discovered subagent transcripts, each with its own read state.
-    subagents: BTreeMap<PathBuf, FileFollower>,
+    /// The session's transcript: the follower's identity (what the picker marks as current and
+    /// what a re-entry compares against), whether or not it is the followed source.
+    transcript: PathBuf,
+    source: Source,
     /// Absolute, lexically normalized member paths → strongest category, merged across files.
     members: BTreeMap<PathBuf, Category>,
 }
 
+/// What a [`Follower`] reads (CONTEXT.md: the **session activity log** is the live source
+/// whenever one exists for the session; the **session transcript** is the history source).
+enum Source {
+    /// The transcript and its subagent transcripts.
+    Transcript {
+        main: FileFollower,
+        /// Discovered subagent transcripts, each with its own read state.
+        subagents: BTreeMap<PathBuf, FileFollower>,
+    },
+    /// The hook-written activity log — one file, subagent calls included; the transcript is not
+    /// consulted at all (strict precedence).
+    ActivityLog(FileFollower),
+}
+
 impl Follower {
+    /// Follow a session through its transcript (and subagent transcripts).
     pub fn new(path: impl Into<PathBuf>) -> Self {
+        let transcript = path.into();
         Self {
-            main: FileFollower::new(path),
-            subagents: BTreeMap::new(),
+            source: Source::Transcript {
+                main: FileFollower::new(transcript.clone()),
+                subagents: BTreeMap::new(),
+            },
+            transcript,
             members: BTreeMap::new(),
         }
     }
 
+    /// Follow a session through its activity log; `transcript` stays the session's identity.
+    pub fn with_activity_log(transcript: impl Into<PathBuf>, log: impl Into<PathBuf>) -> Self {
+        Self {
+            transcript: transcript.into(),
+            source: Source::ActivityLog(FileFollower::with_apply(log, crate::activity::apply_line)),
+            members: BTreeMap::new(),
+        }
+    }
+
+    /// The session's transcript path — its identity, even while the activity log is followed.
     pub fn path(&self) -> &Path {
-        &self.main.path
+        &self.transcript
+    }
+
+    /// Whether the live source (the activity log) is what this follower reads.
+    pub fn follows_log(&self) -> bool {
+        matches!(self.source, Source::ActivityLog(_))
     }
 
     /// Where this session's subagent transcripts live: `<dir>/<session-id>/subagents`.
     fn subagents_dir(&self) -> Option<PathBuf> {
-        let stem = self.main.path.file_stem()?;
-        Some(self.main.path.parent()?.join(stem).join("subagents"))
+        let stem = self.transcript.file_stem()?;
+        Some(self.transcript.parent()?.join(stem).join("subagents"))
     }
 
     /// Read anything appended since the last poll — in the main transcript or any subagent
@@ -382,16 +428,19 @@ impl Follower {
     /// (usually missing) subagents-directory listing.
     pub fn poll(&mut self) -> bool {
         // Discover new subagent transcripts; existing entries keep their read state.
-        if let Some(dir) = self.subagents_dir() {
+        let subagents_dir = self.subagents_dir();
+        if let Source::Transcript { subagents, .. } = &mut self.source
+            && let Some(dir) = subagents_dir
+        {
             for info in list_sessions(&dir) {
-                self.subagents
+                subagents
                     .entry(info.path.clone())
                     .or_insert_with(|| FileFollower::new(info.path));
             }
         }
         let mut changed = false;
         let mut rebuild = false;
-        for f in std::iter::once(&mut self.main).chain(self.subagents.values_mut()) {
+        for f in self.source.files_mut() {
             match f.poll(&mut self.members) {
                 FilePoll::Unchanged => {}
                 FilePoll::Applied(c) => changed |= c,
@@ -411,12 +460,26 @@ impl Follower {
     /// reproduces the same members reports "nothing changed".
     fn rebuild(&mut self) -> bool {
         let before = std::mem::take(&mut self.members);
-        self.subagents.retain(|path, _| path.is_file());
-        for f in std::iter::once(&mut self.main).chain(self.subagents.values_mut()) {
+        if let Source::Transcript { subagents, .. } = &mut self.source {
+            subagents.retain(|path, _| path.is_file());
+        }
+        for f in self.source.files_mut() {
             f.reset();
             f.poll(&mut self.members); // a second shrink mid-rebuild is impossible: offset is 0
         }
         before != self.members
+    }
+}
+
+impl Source {
+    /// Every followed file, main transcript first.
+    fn files_mut(&mut self) -> Box<dyn Iterator<Item = &mut FileFollower> + '_> {
+        match self {
+            Source::Transcript { main, subagents } => {
+                Box::new(std::iter::once(main).chain(subagents.values_mut()))
+            }
+            Source::ActivityLog(log) => Box::new(std::iter::once(log)),
+        }
     }
 }
 
@@ -514,7 +577,7 @@ fn apply_bash_edit_diff(members: &mut BTreeMap<PathBuf, Category>, diff: &Value)
 /// Admit one path at `cat`, keeping the strongest category seen (created ≻ updated ≻
 /// mentioned). Relative or non-normalizable paths are skipped: transcript tool paths are
 /// absolute, so anything else is not trustworthy enough to display.
-fn record(members: &mut BTreeMap<PathBuf, Category>, path: &str, cat: Category) -> bool {
+pub(crate) fn record(members: &mut BTreeMap<PathBuf, Category>, path: &str, cat: Category) -> bool {
     let p = Path::new(path);
     if !p.is_absolute() {
         return false;

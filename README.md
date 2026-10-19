@@ -49,7 +49,9 @@ back into the chat. It never touches your files.
   it with another checkout, or pin the old version and walk the new one.
 - **See what your agent touched.** `s` shows the files the current Claude Code session created
   (`+`), updated (`~`), or mentioned (`·`) — untracked files and files outside the root included —
-  following the session live, like Claude Desktop's file panel. `S` picks among sessions; set
+  following the session live, like Claude Desktop's file panel — the session of the pane you
+  opened the viewer beside, not whichever wrote last. Run `herdr-file-viewer hook install` once
+  and edits made through the shell show up too. `S` picks among sessions; set
   `session_view = true` to open straight into it.
 - **Agents show you the spot. You send notes back.** Teach them the [bundled skill](skills/herdr-file-viewer/SKILL.md)
   and "open `src/app.rs:42` in Files" lands you there. Mark a file or a range (`a`), copy the

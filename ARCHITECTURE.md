@@ -25,7 +25,7 @@ is unit-testable with stubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `host` | The herdr boundary: parse the injected `HERDR_PLUGIN_CONTEXT_JSON` launch context, degrading to `{ cwd }` on anything malformed (never panics), then layer an explicit `HERDR_FILE_VIEWER_ROOT` (absolute, existing directory; set by the root picker or an agent) over the invoking pane's cwd. |
+| `host` | The herdr boundary: parse the injected `HERDR_PLUGIN_CONTEXT_JSON` launch context — the pane cwd and, validated flag-safe, the focused pane id the session view asks herdr about — degrading to `{ cwd }` on anything malformed (never panics), then layer an explicit `HERDR_FILE_VIEWER_ROOT` (absolute, existing directory; set by the root picker or an agent) over the invoking pane's cwd. |
 | `context` | The normalized `LaunchContext` the host hands to the resolver. |
 | `root` | Resolve the tree root (git worktree top-level, else cwd) and git-presence; the re-root engine re-resolves the root and rebuilds the tree + git services in place when you switch worktrees. |
 | `git` | Read-only git queries: status, baseline selection, changed-set, per-file diff. The **only** module that shells out to `git`, and only with read-only subcommands. |
@@ -46,7 +46,9 @@ is unit-testable with stubs.
 | `index` | Build a deterministic flat list of root-relative file paths, honoring Git ignore/exclude rules unless explicitly asked to include ignored files and always excluding `.git/`; shared by the file finder and project-content scanner. |
 | `repo_search` | Bounded project-content scanner (run only on its worker): walks with the file index's policy (`index::file_walk`, so the same repo-bounded `.gitignore` rules and `i` scope), literal smartcase matching (the `search::smartcase_needle` rule `/` uses), one result per source line, 1 MiB/file and 500-result caps, and defensive skipping of NUL-bearing, invalid-UTF-8, unreadable, or vanished files. Polls a cancellation probe between files and publishes cumulative partial hits at most every 50 ms. |
 | `search` | Pure literal smartcase matching primitives shared by in-file and project-content search; in-file search returns every byte-offset match range in displayed document order, while the scanner asks for the first match on each source line. Never a regex; no I/O. |
-| `session` | The Session Transcript Reader behind the session view (ADR-0011): locate Claude Code's per-project transcripts (`~/.claude/projects/<slug>`), incrementally follow the current one **and its subagent transcripts** (Task-tool sidechains are separate files under `<session-id>/subagents/`), and fold the deterministic signals — file-tool results, user `@`-mentions — into the session file set, split in-root (root-relative, changed-set-shaped) vs outside-root (absolute), each member carrying its strongest category (created ≻ updated ≻ mentioned). Reads are append-only tails, chunk-bounded per poll so a huge transcript streams in without blocking input; a shrunk or vanished file triggers a clean rebuild of the merged set. Read-only and fail-soft throughout: unknown shapes are skipped, all failures degrade to an empty set. |
+| `activity` | The **session activity log** shared by the hook (writer) and the session view (reader): where it lives (`<state dir>/herdr/plugins/herdr-file-viewer/sessions/<session-id>.jsonl`), the one-line record shape, and the fold of file records into the session file set. The log is the live source whenever one exists for a session; the transcript is then not consulted. |
+| `hook` | The Claude Code hook (`herdr-file-viewer hook run`) that writes the activity log from the documented hook payload — file tools, Claude Code's Bash edit record plus a stamped, pruned, capped disk scan around each shell command, prompt `@`-mentions — always exit 0 and silent; and `hook install \| uninstall \| status`, the explicit, idempotent, atomic edit of the user-scope Claude Code settings. |
+| `session` | The Session Transcript Reader behind the session view (ADR-0011) and the follower that reads either source: locate Claude Code's per-project transcripts (`~/.claude/projects/<slug>`), find the transcript herdr names for the accompanied pane (`herdr agent get`, by session id across the store) or else the newest for the root, incrementally follow the current one **and its subagent transcripts** (Task-tool sidechains are separate files under `<session-id>/subagents/`), and fold the deterministic signals — file-tool results, user `@`-mentions — into the session file set, split in-root (root-relative, changed-set-shaped) vs outside-root (absolute), each member carrying its strongest category (created ≻ updated ≻ mentioned). Reads are append-only tails, chunk-bounded per poll so a huge transcript streams in without blocking input; a shrunk or vanished file triggers a clean rebuild of the merged set. Read-only and fail-soft throughout: unknown shapes are skipped, all failures degrade to an empty set. |
 | `highlight` | Overlay match highlighting onto the content pane: re-segment each line's spans at the match byte boundaries and patch a highlight style over the matched runs, with a distinct style on the current match. Pure; composes over the delegated render rather than re-rendering. |
 | `text_layout` | A pure text-wrapping helper: how many display rows a line occupies at a given width, shared by the content pane, the finder, and the help overlay. No I/O. |
 | `prompt` | The reusable Unicode-safe, cursor-aware single-line editor (initial text, insert/delete, backspace, Left/Right/Home/End) shared by finder/search appenders and the annotation editor. |
@@ -126,7 +128,7 @@ retain file/title markers where applicable but never receive guessed source-line
 
 ## Trust boundaries
 
-Four untrusted inputs are handled defensively (see [SECURITY.md](SECURITY.md)):
+Five untrusted inputs are handled defensively (see [SECURITY.md](SECURITY.md)):
 
 1. **File content** is untrusted: preview content is fed to renderers on **stdin** (never as an
    argument), and renderer output is re-sanitized so no escape sequence can drive the terminal.
@@ -139,6 +141,9 @@ Four untrusted inputs are handled defensively (see [SECURITY.md](SECURITY.md)):
 3. **The herdr-injected context** is parsed defensively and degrades to a minimal default.
 4. **Official remote-notice documents** come only from fixed HTTPS sources, stay bounded and
    fail-silent, and pass through terminal-control neutralization before display.
+5. **Claude Code hook payloads and herdr's agent replies** feed the session view: session ids are
+   accepted only as UUID-shaped tokens, paths are normalized by the reader, and the hook is a
+   silent no-op on anything malformed.
 
 ## Tests
 

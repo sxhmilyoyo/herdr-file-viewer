@@ -3,6 +3,7 @@
 //! Session Controller (a feature submodule, like `picker`).
 
 use super::*;
+use crate::activity;
 use crate::presenter::{SessionPickerRowView, SessionPickerView};
 use crate::session::{
     Follower, SessionSet, agent_session_id_from_json, home_dir, list_sessions, projects_dir,
@@ -92,7 +93,7 @@ impl Controller {
                     .as_ref()
                     .is_none_or(|f| f.path() != path)
                 {
-                    self.session_follower = Some(Follower::new(path));
+                    self.session_follower = Some(self.follower_for(path));
                 }
             }
             None => {
@@ -108,7 +109,7 @@ impl Controller {
                                 .as_ref()
                                 .is_none_or(|f| f.path() != newest) =>
                         {
-                            self.session_follower = Some(Follower::new(newest));
+                            self.session_follower = Some(self.follower_for(newest));
                         }
                         _ => {}
                     }
@@ -122,6 +123,14 @@ impl Controller {
             f.poll();
         } else {
             self.action_notice = Some("No Claude Code session found for this root".to_string());
+        }
+        // Without the hook, shell edits reach the view only through Claude Code's own Bash edit
+        // record (best effort): say so once per entry, with the one-step remedy.
+        if self.session_hook_installed == Some(false) && self.session_follower.is_some() {
+            self.action_notice = Some(
+                "Session hook not installed: shell edits may be missing (run: herdr-file-viewer hook install)"
+                    .to_string(),
+            );
         }
         self.apply_session_set(true);
     }
@@ -194,7 +203,21 @@ impl Controller {
                     .as_ref()
                     .is_none_or(|f| f.path() != newest)
             {
-                self.session_follower = Some(Follower::new(newest));
+                self.session_follower = Some(self.follower_for(newest));
+                changed = true;
+            }
+            // The hook may have opened the session's activity log after we started following
+            // its transcript (an install mid-session): switch to the live source.
+            let upgrade = self
+                .session_follower
+                .as_ref()
+                .filter(|f| !f.follows_log())
+                .and_then(|f| {
+                    self.log_for(f.path())
+                        .map(|log| (f.path().to_path_buf(), log))
+                });
+            if let Some((transcript, log)) = upgrade {
+                self.session_follower = Some(Follower::with_activity_log(transcript, log));
                 changed = true;
             }
         }
@@ -347,7 +370,31 @@ impl Controller {
             .run_json(&["agent", "get", pane])
             .ok()?;
         let id = agent_session_id_from_json(&json)?;
-        transcript_for_session_id(&home_dir()?, &self.root, &id)
+        let home = home_dir()?;
+        transcript_for_session_id(&home, &self.root, &id).or_else(|| {
+            // No transcript yet (a brand-new session), but the hook has already opened its
+            // activity log: the expected transcript path is identity enough to follow the log.
+            self.log_for_id(&id)
+                .map(|_| projects_dir(&home, &self.root).join(format!("{id}.jsonl")))
+        })
+    }
+
+    /// The session activity log for a transcript's session, when the hook has written one.
+    fn log_for(&self, transcript: &Path) -> Option<PathBuf> {
+        self.log_for_id(activity::session_id_of(transcript)?)
+    }
+
+    fn log_for_id(&self, id: &str) -> Option<PathBuf> {
+        activity::log_path(&activity::log_dir()?, id).filter(|p| p.is_file())
+    }
+
+    /// A follower for `transcript`: its activity log when one exists (the live source; strict
+    /// precedence, CONTEXT.md "session activity log"), else the transcript itself.
+    fn follower_for(&self, transcript: PathBuf) -> Follower {
+        match self.log_for(&transcript) {
+            Some(log) => Follower::with_activity_log(transcript, log),
+            None => Follower::new(transcript),
+        }
     }
 }
 

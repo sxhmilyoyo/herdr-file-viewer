@@ -46,5 +46,6 @@ fn main() -> std::io::Result<()> {
         }
         CliAction::PickRoot => herdr_file_viewer::root_picker::run(),
         CliAction::Run { open } => herdr_file_viewer::run(open),
+        CliAction::Hook(cmd) => std::process::exit(herdr_file_viewer::hook::main(cmd)),
     }
 }

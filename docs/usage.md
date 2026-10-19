@@ -326,10 +326,11 @@ viewer still opens, but the status markers, filter, baseline, and diffs are degr
 ## Session view
 
 Press `s` to see **what the current Claude Code session touched** instead of the whole directory —
-the companion-pane view of an agent's work, in the spirit of Claude Desktop's file panel. It reads
-the session's own transcript (`~/.claude/projects/…`), so there is nothing to install or configure,
-and it **follows the session live**: files appear as the agent works, without ever moving your
-cursor. Press `s` again to restore the full tree.
+the companion-pane view of an agent's work, in the spirit of Claude Desktop's file panel. It works
+out of the box from the session's own transcript (`~/.claude/projects/…`), and it **follows the
+session live**: files appear as the agent works, without ever moving your cursor. Install the
+one-line [session hook](#the-session-hook) once and edits the agent makes through the shell appear
+too. Press `s` again to restore the full tree.
 
 - **Every touched file, categorized.** Each file row carries a glyph for how the session touched
   it — `+` created, `~` updated, `·` mentioned (read, or `@`-mentioned in a prompt) — with the
@@ -341,14 +342,18 @@ cursor. Press `s` again to restore the full tree.
   with home abbreviated to `~`. They preview like any file, but carry no git decoration and can't be
   annotated; navigation stays root-bound — the divider displays those files, it never turns the
   viewer into a browser of your whole disk.
-- **Membership is deterministic.** Only real signals count: the agent's file tools (reads, edits,
-  writes — including a subagent's), and files you `@`-mentioned. Shell-command side effects are
-  never guessed at, so a wrong entry can't erode trust in the panel. Denied or failed tool calls
-  don't count.
-- **Which session?** The newest transcript for this root, by default — starting a fresh `claude`
-  here re-points the view automatically. Press `S` to pick a different session (newest first,
-  titles shown when a session was renamed with `/rename`); an explicit pick holds until a worktree
-  switch, another pick, or exit.
+- **Membership is evidence, not guesswork.** A file is listed when the agent's file tools read,
+  edited, or wrote it (a subagent's too), when you `@`-mentioned it, when Claude Code's own record
+  of a shell command says the command changed it, or — with the [session hook](#the-session-hook)
+  — when it was seen changing on disk while a shell command ran. What a shell command merely
+  *read* is never inferred, and denied or failed tool calls don't count.
+- **Which session?** The one running in the herdr pane the viewer was opened beside: the viewer
+  asks herdr which Claude Code session that pane runs, so a second `claude` in the same directory
+  never takes over the view, and `/clear` or `/resume` in that pane is followed within a few
+  seconds. Outside herdr (or for a pane without an agent) it follows the newest transcript for
+  this root instead. Press `S` to pick a different session (newest first, titles shown when a
+  session was renamed with `/rename`); an explicit pick holds until a worktree switch, another
+  pick, or exit.
 - **It composes.** `]` / `[` jump across the session's files, `Enter`/`p`/`e`/`O`/`y` all work on
   members, and the changed-only (`c`) / git-status (`d`) filters displace it (each replaces what
   the tree shows). Works in a non-git directory too. To open **straight into** the session view,
@@ -358,6 +363,39 @@ With no Claude Code session recorded for the root, the view is empty with a noti
 breaks. The transcript format is an undocumented Claude Code internal, so the reader is
 deliberately fail-soft: unrecognized entries are skipped, and a malformed transcript degrades to
 an empty view, never a crash.
+
+### The session hook
+
+Claude Code writes its transcript a little after the fact and, by its own account, records the
+files a shell command changed only best-effort (and only in auto mode unless you set
+`bashEditDiffEnabled` in your Claude Code settings). The **session hook** closes that gap: a
+Claude Code hook, run by Claude Code itself after each file tool call, shell command, and prompt,
+that appends what was touched to a small **session activity log** the viewer follows instead of
+the transcript. Shell edits — `sed -i`, heredocs, a script writing ten files — show up within a
+second, with `+` when the file is new. Install it once per machine:
+
+```bash
+herdr-file-viewer hook install      # registers the hook in ~/.claude/settings.json
+herdr-file-viewer hook status       # is it registered? does the registered binary still exist?
+herdr-file-viewer hook uninstall    # removes exactly what install added
+```
+
+`install` edits only your **user-scope** Claude Code settings (`$CLAUDE_CONFIG_DIR/settings.json`,
+else `~/.claude/settings.json`), adds one entry per event alongside whatever hooks you already
+have, and is idempotent; running Claude Code sessions pick it up after a restart or `/hooks`.
+Run it again after updating the plugin if `hook status` reports the registered binary is gone.
+The log lives under the plugin's own state directory
+(`$XDG_STATE_HOME/herdr/plugins/herdr-file-viewer/sessions/<session-id>.jsonl`, the directory
+herdr hands the plugin as its state dir; `%LOCALAPPDATA%` on Windows), one append-only file per
+session; the hook writes nothing else and never touches your repository. When a session has a
+log, the viewer reads only the log; sessions from before the install still come from their
+transcripts, and a session that gets its log mid-way switches over at the next refresh. The `?`
+Settings tab shows `session_hook = installed` once it is in place; until then, entering the
+session view says so with the install command.
+
+Without the hook, raise the transcript's own coverage by setting `"bashEditDiffEnabled": true` in
+`~/.claude/settings.json`: Claude Code then records the files a shell command changed in every
+permission mode, and the viewer reads that record.
 
 ## Navigating within a file
 

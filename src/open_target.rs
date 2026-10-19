@@ -59,6 +59,8 @@ pub enum CliAction {
     PickRoot,
     /// Start the TUI; `open` is the raw `--open` value when present (env is layered in `app::run`).
     Run { open: Option<String> },
+    /// A `hook <sub>` invocation: the Claude Code session hook (`run`) or its installer.
+    Hook(crate::hook::HookCommand),
 }
 
 /// Parse process argv (excluding argv[0]) into a [`CliAction`].
@@ -84,6 +86,20 @@ where
     let mut print_direction = false;
     let mut pick_root = false;
     let mut args = args.into_iter().peekable();
+    // `hook <sub>` is a subcommand, not a flag: it is recognized only in first position, so a
+    // stray `hook` among herdr-appended args can never hijack a normal launch.
+    if args.peek().is_some_and(|a| a.as_ref() == "hook") {
+        args.next();
+        use crate::hook::HookCommand;
+        let sub = match args.next().as_ref().map(AsRef::as_ref) {
+            Some("run") => HookCommand::Run,
+            Some("install") => HookCommand::Install,
+            Some("uninstall") => HookCommand::Uninstall,
+            Some("status") => HookCommand::Status,
+            _ => HookCommand::Help,
+        };
+        return CliAction::Hook(sub);
+    }
     while let Some(arg) = args.next() {
         let arg = arg.as_ref();
         match arg {
@@ -547,6 +563,36 @@ mod tests {
     #[test]
     fn parse_args_launch_decision() {
         assert_eq!(parse_args(["--launch-decision"]), CliAction::LaunchDecision);
+        // `hook <sub>` in first position; anything else about it degrades to usage.
+        use crate::hook::HookCommand;
+        assert_eq!(
+            parse_args(["hook", "run"]),
+            CliAction::Hook(HookCommand::Run)
+        );
+        assert_eq!(
+            parse_args(["hook", "install"]),
+            CliAction::Hook(HookCommand::Install)
+        );
+        assert_eq!(
+            parse_args(["hook", "uninstall"]),
+            CliAction::Hook(HookCommand::Uninstall)
+        );
+        assert_eq!(
+            parse_args(["hook", "status"]),
+            CliAction::Hook(HookCommand::Status)
+        );
+        assert_eq!(parse_args(["hook"]), CliAction::Hook(HookCommand::Help));
+        assert_eq!(
+            parse_args(["hook", "nope"]),
+            CliAction::Hook(HookCommand::Help)
+        );
+        assert_eq!(
+            parse_args(["--open", "a.rs", "hook", "run"]),
+            CliAction::Run {
+                open: Some("a.rs".into())
+            },
+            "not in first position: an ignored unknown arg"
+        );
         assert_eq!(
             parse_args(["--launch-decision-tab"]),
             CliAction::LaunchDecisionTab

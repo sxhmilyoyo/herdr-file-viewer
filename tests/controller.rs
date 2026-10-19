@@ -11437,6 +11437,7 @@ fn open_help_orders_optional_sections_after_whats_new_and_keeps_independent_scro
         open: "xdg-open".to_string(),
         reveal: "xdg-open".to_string(),
         baseline: herdr_file_viewer::git::Baseline::Head,
+        session_hook: None,
     };
     ctrl.set_settings_display(
         &eff,
